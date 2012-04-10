@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS = -ansi -pedantic -Wall -c -g -D_XOPEN_SOURCE=500 
+CFLAGS = -std=c99 -pedantic -Wall -D_XOPEN_SOURCE=500 -D_BSD_SOURCE -g -c
 PROG = calc
 
 all: $(PROG)
