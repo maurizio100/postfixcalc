@@ -4,7 +4,7 @@
    @date 06.04.2012
 **/
 /******************************************
-This is a program that simulates a postfix calculator
+This program simulates a postfix calculator
 Postfix notations work like that:
 2 * ( 1 + 3) => 2 1 3 + *
 1 + 2 => 1 2 +
@@ -19,7 +19,7 @@ calc [-i] [-a] [file1[file2 ...]]
 -i ... integer value of result
 *******************************************/
 /*****************************************
-Includes and Definitions
+Includes and Constants
 *****************************************/
 #include<stdio.h>
 #include<math.h>
@@ -28,15 +28,7 @@ Includes and Definitions
 #include<errno.h>
 #include<string.h>
 
-#define BFSIZE 1025
-#define ERRLEN 1025
-#define TRUE 1
-/*************************************
-Global variables
-*************************************/
-static char *prgname;
-static char *errmsg;
-static FILE *src_file;
+#define BFSIZE (1025)
 /****************************************
 Stack definition and function
 ****************************************/
@@ -46,22 +38,73 @@ typedef struct{
   double *esp;
 }Stack;
 
+typedef enum {FALSE, TRUE} bool;
+/*************************************
+Global variables
+*************************************/
+/* Name of the program */
+static char *prgname;
+/* file that is going to read */
+static FILE *src_file;
+/* stack for the digits read */
 static Stack *stack;
 /****************************************
 Function prototypes
 ****************************************/
-static int create_stack(const unsigned int size);
+/**
+ * @brief Create Stack for calculator
+ * @param size The capacity of the stack
+ * @return feedback if the stack was created succesfully; FALSE in case of fail
+ */
+static bool create_stack(const unsigned int size);
+/**
+ * @brief pushes an item on the stack
+ * @param value The value that is going on the stack
+ */
 static void push(const double value);
-static double pop();
-static void destroy_stack();
+/**
+ * @brief gets the last item pushed onto the stack
+ * @return value last pushed value 
+ */
+static double pop(void);
+/**
+ * @brief clears the stack from the storage
+ */
+static void destroy_stack(void);
+/**
+ * @brief a check-function that determines if the stack is empty
+ * @return TRUE if stack is empty; FALSE if stack is not empty
+ */
+static bool stack_isempty(void);
+/**
+ * @brief a check-function that determines if the stack is full
+ * @return TRUE if stack is full; FALSE if stack is not full
+ */
+static bool stack_isfull(void);
+/**
+ * @brief calculates the given calculation line
+ * @param the line that has to be calculated in postfix notation
+ * @return calculated value based on given calculation line
+ */
 static double calculate(const char* calculation);
+/**
+ * @brief frees the memory from all allocated ressources
+ */
+static void free_ressources(void);
 /****************************************
 Error routines
 ****************************************/
 static void usage(void);
-static void file_error(char* errmsg, const char* file);
-static void stack_error(char* errmsg);
-static void calc_error(char* errmsg);
+/**
+ * @brief terminates the program on program error
+ * @param errmessage An errormessage that says what went wrong
+ */ 
+static void bailout(const char *errmessage);
+/**
+ * @brief prints error messages
+ * @param errmessage
+ */
+static void printerror(const char* errmessage);
 /**************************************
 Main Procedure
 **************************************/
@@ -74,11 +117,11 @@ int main(int argc, char **argv){
     outmode[0] ... absolute output
     outmode[1] ... integer output
   */
-  int outmode[] = {0, 0};
+  bool outmode[] = {0, 0};
 
   double result = 0.0;
  
-  int fileread = 0;   
+  bool fileread = FALSE;   
   char *in_line = 0;  
   char *res = 0;
   /*****Usage test****/
@@ -93,22 +136,18 @@ int main(int argc, char **argv){
     case '?': usage(); break;
     default: assert(0);
     }
+
   } 
 
   /******Processing inputs*******/
-  if( create_stack(BFSIZE) == 0 ){ 
-    errmsg = (char*)malloc(ERRLEN * sizeof(char));
-    errmsg = "Could not create Stack. Size has to be > 0."; 
-    stack_error(errmsg);
+  if( create_stack(BFSIZE) == FALSE ){
+    bailout("Could not create Stack. Stacksize has to be > 0.");
   }
 
-  if(optind < argc){  
-    src_file = fopen(argv[optind], "r"); 
-
-    if( src_file == 0 ){
-      errmsg = (char*)malloc(ERRLEN * sizeof(char));
-      errmsg = "No such file.";
-      file_error(errmsg, argv[optind]); 
+  if(optind < argc){ /* reading from file(s) */ 
+    if( (src_file = fopen(argv[optind],"r")) == NULL ){
+      /*file not found*/
+      bailout("No such file."); 
     }
 
     optind++;
@@ -116,34 +155,35 @@ int main(int argc, char **argv){
   } else { src_file = stdin; }
 
   in_line = (char*)malloc(BFSIZE * sizeof(char));
+
   while( (res=fgets(in_line, BFSIZE, src_file))!=NULL || (optind < argc) ){
    
     /*for fileinput only - loads the next file from arguments*/ 
     if( res == NULL && fileread ){
-      fclose(src_file);      
-      src_file = fopen(argv[optind], "r");
-     
-      if( src_file == 0 ){
-	free(in_line);
-	errmsg = "No such file.";
-	file_error(errmsg, argv[optind]);   
+
+      if( fclose(src_file) == EOF ) bailout("Could not close file.");      
+    
+      if( (fopen(argv[optind], "r")) != NULL ){
+	optind++;
+	continue;
       }
-      
-      optind++;
-      continue;
+
+      free(in_line);
+      bailout("No such file.");
+     
     }
     /*calculation of line read*/
     result = calculate(in_line);
-	if( outmode[0] == TRUE ) result = abs(result);
-	if( outmode[1] == TRUE ) printf("%d\n",(int)result);
-	else printf("%f\n",result);
+
+    if( outmode[0] == TRUE ) result = abs(result);
+    
+    if( outmode[1] == TRUE ) printf("%d\n",(int)result);
+    else printf("%f\n",result);
+
   }
 
-  if( fileread ) fclose(src_file);
-
   /**********clearing and exit***************/
-  destroy_stack();
-  free(in_line);
+  free_ressources();
   exit(EXIT_SUCCESS);
 }
 /************************************
@@ -153,13 +193,21 @@ static double calculate(const char* calculation){
   double operand = 0.0;
   char *endptr = (char*)malloc(BFSIZE * sizeof(char));
   strcpy(endptr, calculation);
-  
-   while( (*endptr != '\n') && (*endptr != EOF)){ 
+
+  while( (*endptr != '\n') && (*endptr != EOF)){ 
     operand = strtod(endptr, &endptr);
 
-    if( operand == 0){
-      if( *endptr == ' ' ) endptr++;
+    if( operand == HUGE_VAL ) bailout("The given value causes an over- or underflow");
 
+    if( operand == 0 ){ 
+      /* 
+       * check for space is needed because endptr stops one char before operator 
+       * the loop is for ignoring all whitespaces in front of the operator
+       */
+  
+
+      while( *endptr == ' ' ){endptr++;} 
+      
       switch(*endptr){
       case '+': push(pop() + pop());break;
       case '-': 
@@ -171,76 +219,103 @@ static double calculate(const char* calculation){
 	push(pop() / operand); break;
       case 's': push(sin(pop())); break;
       case 'c': push(cos(pop())); break;
+      
       default: 
-	fclose(src_file);
-	errmsg="Not a valid operation."; 
-	calc_error(errmsg);
+	bailout("Not a valid operation."); 
       }
-
-      endptr++;
+      /* moves endptr away from the operator */
+      endptr++; 
     }else{
+      printf("pushing: %f\n", operand);
       push(operand);
     }
-   }
+  }
 
-   if( stack->actsize > 1 ){
-     fclose(src_file);
-     errmsg = (char*)malloc(ERRLEN * sizeof(char));
-     errmsg = "Wrong use of Postfix notation.";
-     calc_error(errmsg);
-   }
+  if( stack->actsize > 1 ){
+    bailout("Wrong use of Postfix notation.");
+  }
 
-   return pop();
+  return pop();
 }
 
-static int create_stack(const unsigned int size){
-  if( size <= 0 ) return 0;
+static bool create_stack(const unsigned int size){
+  if( size <= 0 ) return FALSE;
 
   stack = (Stack*)malloc(sizeof( Stack ));
   stack->maxsize = size;
   stack->actsize =0;
   stack->esp=(double*)malloc(sizeof(double)*size);
 
-  return 1;
+  return TRUE;
 }
 static void push(const double value){
-  /*Error message when stack is full*/
+  if( stack == 0 ) bailout("Stack is not initialized.\n");
+  if( stack_isfull() ==  TRUE ) bailout("Stack is full.\n");
   stack->esp[stack->actsize] = value;
   stack->actsize++;
  
 }
-static double pop(){
-  /*Error message when stack is empty*/
+static double pop(void){
+  if( stack == 0 ) bailout("Stack is not initialized.\n");
+  if( stack_isempty() == TRUE ) bailout("Stack is empty.\n");
   stack->actsize--;
   return stack->esp[stack->actsize]; 
+
 }
-static void destroy_stack(){
+static void destroy_stack(void){
+  if( stack == 0 ) bailout("Stack is not initialized.\n");
   free(stack->esp);
   free(stack);
-  stack = 0;
+  stack = (Stack *) 0;
 }
+static bool stack_isempty(void){
+  if( stack == 0 ) bailout("Stack is not initialized.\n");
+  if( stack->actsize != 0) return FALSE;
+  return TRUE;
+}
+static bool stack_isfull(void){
+  if( stack == 0 ) bailout("Stack is not initialized.\n");
+  if( stack->actsize < stack->maxsize ) return FALSE;
+  return TRUE;
+}
+
 /************************************
 Error routines definitions
  ***********************************/
 static void usage(void){
   (void)fprintf(stderr,"Usage: %s [-a] [-i] [file1[file2 ...]]\n",prgname);
-  exit(EXIT_FAILURE);
+  bailout((const char*) 0);
 }
-static void file_error(char* errmsg, const char* file){
-  (void)fprintf(stderr,"Error: Problem with file %s. %s\n", file, errmsg);
-  free(errmsg);
-  exit(EXIT_FAILURE);
-}
-static void stack_error(char* errmsg){
-  (void)fprintf(stderr,"Error: Problem with stack. %s\n", errmsg);
-  free(errmsg);
-  if( stack != NULL) destroy_stack(); 
-  exit(EXIT_FAILURE);
-}
-static void calc_error(char* errmsg){
-  (void)fprintf(stderr,"Error: Problem with calculation. %s\n", errmsg);
-  free(errmsg);
-  if( stack != NULL ) destroy_stack();
+
+static void bailout(const char *errmessage){
+  if(errmessage != (const char*) 0){
+    printerror(errmessage);
+  }
+
+  free_ressources();
   exit(EXIT_FAILURE);
 }
 
+static void printerror(const char *errmessage){
+  if( errno != 0 ){
+    (void) fprintf(stderr, "%s: %s - %s\n", prgname, errmessage, strerror(errno));
+  }else{
+    (void) fprintf(stderr, "%s: %s\n", prgname, errmessage);
+  }
+}
+
+static void free_ressources(void){
+
+  if(src_file != (FILE *) 0){
+
+    if( fclose(src_file) == EOF ){
+      src_file = (FILE *) 0;
+      bailout("Cannot close file stream.");
+    }
+    src_file = (FILE *) 0;
+  }
+
+  if( stack != (Stack *) 0 ){
+    destroy_stack();
+  }
+}
