@@ -48,6 +48,8 @@ static char *prgname;
 static FILE *src_file;
 /* stack for the digits read */
 static Stack *stack;
+/* helping line for calculation */
+static char *hline;
 /****************************************
 Function prototypes
 ****************************************/
@@ -191,23 +193,26 @@ Function definitions
  ***********************************/
 static double calculate(const char* calculation){
   double operand = 0.0;
-  char *endptr = (char*)malloc(BFSIZE * sizeof(char));
-  strcpy(endptr, calculation);
+  hline = (char*)malloc(BFSIZE * sizeof(char));
+  strcpy(hline, calculation);
+  char* endptr = (char*) 0;
 
-  while( (*endptr != '\n') && (*endptr != EOF)){ 
-    operand = strtod(endptr, &endptr);
+  while( (*hline != '\n') && (*hline != EOF)){
+    operand = strtod(hline, &endptr);
 
     if( operand == HUGE_VAL ) bailout("The given value causes an over- or underflow");
+   
 
-    if( operand == 0 ){ 
+    if( operand == 0 && hline == endptr ){ 
       /* 
        * check for space is needed because endptr stops one char before operator 
        * the loop is for ignoring all whitespaces in front of the operator
        */
-  
+      while( *endptr == ' ' || *endptr == '\t' ){endptr++;}
+      /* if there were closing whitespaces after last operand there shouldnt be
+       * a wrong operation error, so this if statement breaks the loop */
+      if( *endptr == '\n' || *endptr == EOF ){ break; }
 
-      while( *endptr == ' ' ){endptr++;} 
-      
       switch(*endptr){
       case '+': push(pop() + pop());break;
       case '-': 
@@ -216,25 +221,26 @@ static double calculate(const char* calculation){
       case '*': push(pop() * pop()); break;
       case '/': 
 	operand = pop();
+	if( operand == 0 ) bailout("Division by Zero.");
 	push(pop() / operand); break;
       case 's': push(sin(pop())); break;
       case 'c': push(cos(pop())); break;
       
-      default: 
+      default:
 	bailout("Not a valid operation."); 
       }
       /* moves endptr away from the operator */
       endptr++; 
     }else{
-      printf("pushing: %f\n", operand);
       push(operand);
     }
+    hline = endptr;
   }
 
   if( stack->actsize > 1 ){
     bailout("Wrong use of Postfix notation.");
   }
-
+ 
   return pop();
 }
 
@@ -303,7 +309,6 @@ static void printerror(const char *errmessage){
     (void) fprintf(stderr, "%s: %s\n", prgname, errmessage);
   }
 }
-
 static void free_ressources(void){
 
   if(src_file != (FILE *) 0){
@@ -318,4 +323,5 @@ static void free_ressources(void){
   if( stack != (Stack *) 0 ){
     destroy_stack();
   }
+  
 }
