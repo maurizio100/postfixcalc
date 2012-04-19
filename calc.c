@@ -1,7 +1,7 @@
 /**
    @file calc.c
    @author Maurizio Rinder 0828852
-   @date 06.04.2012
+   @date 19.04.2012
 **/
 /******************************************
 This program simulates a postfix calculator
@@ -48,8 +48,7 @@ static char *prgname;
 static FILE *src_file;
 /* stack for the digits read */
 static Stack *stack;
-/* helping line for calculation */
-static char *hline;
+
 /****************************************
 Function prototypes
 ****************************************/
@@ -88,14 +87,18 @@ static bool stack_isfull(void);
  * @param the line that has to be calculated in postfix notation
  * @return calculated value based on given calculation line
  */
-static double calculate(const char* calculation);
+static double calculate(char* calculation);
 /**
  * @brief frees the memory from all allocated ressources
  */
 static void free_ressources(void);
+
 /****************************************
 Error routines
 ****************************************/
+/**
+ * @brief prints usage of the program
+ */
 static void usage(void);
 /**
  * @brief terminates the program on program error
@@ -108,6 +111,18 @@ static void bailout(const char *errmessage);
  */
 static void printerror(const char* errmessage);
 /**************************************
+Functionpointer and operations
+**************************************/
+double (*operation) (double, double);
+
+double add( double a, double b){ return a + b; }
+double sub( double a, double b){ return a - b; }
+double mul( double a, double b){ return a * b; }
+double divide( double a, double b){
+  if( b == 0 ){ bailout("divide Division by zero"); }
+  return a / b;
+}
+/**************************************
 Main Procedure
 **************************************/
 int main(int argc, char **argv){
@@ -119,17 +134,18 @@ int main(int argc, char **argv){
     outmode[0] ... absolute output
     outmode[1] ... integer output
   */
-  bool outmode[] = {0, 0};
+  bool outmode[] = {FALSE, FALSE};
 
   double result = 0.0;
  
   bool fileread = FALSE;   
   char *in_line = 0;  
   char *res = 0;
-  /*****Usage test****/
-  if(argc > 0) prgname = argv[0];
 
-  while(( c = getopt( argc,argv,"ai") ) != EOF ){
+  /*****Usage test****/
+  if(argc > 0){ prgname = argv[0]; }
+
+  while(( c = getopt( argc,argv,"ai") ) != -1 ){
     switch( c ){
     case 'a':
       outmode[0] = TRUE; break;
@@ -141,15 +157,13 @@ int main(int argc, char **argv){
 
   } 
 
+  if( create_stack(BFSIZE) == FALSE ){ bailout("main Stack initialization failed"); }
   /******Processing inputs*******/
-  if( create_stack(BFSIZE) == FALSE ){
-    bailout("Could not create Stack. Stacksize has to be > 0.");
-  }
 
   if(optind < argc){ /* reading from file(s) */ 
     if( (src_file = fopen(argv[optind],"r")) == NULL ){
       /*file not found*/
-      bailout("No such file."); 
+      bailout("main No such file"); 
     }
 
     optind++;
@@ -158,29 +172,28 @@ int main(int argc, char **argv){
 
   in_line = (char*)malloc(BFSIZE * sizeof(char));
 
-  while( (res=fgets(in_line, BFSIZE, src_file))!=NULL || (optind < argc) ){
+  while( (res=fgets(in_line, BFSIZE, src_file)) !=NULL || (optind < argc) ){
    
     /*for fileinput only - loads the next file from arguments*/ 
-    if( res == NULL && fileread ){
+    if( res == NULL && fileread == TRUE && optind < argc ){
 
-      if( fclose(src_file) == EOF ) bailout("Could not close file.");      
+      if( fclose(src_file) == EOF ){ bailout("main Could not close file"); }      
     
-      if( (fopen(argv[optind], "r")) != NULL ){
-	optind++;
-	continue;
+      if( (fopen(argv[optind], "r")) == NULL ){
+	free(in_line);
+	bailout("main No such file");
+	
       }
-
-      free(in_line);
-      bailout("No such file.");
-     
+      optind++;
+      continue;
     }
     /*calculation of line read*/
     result = calculate(in_line);
 
-    if( outmode[0] == TRUE ) result = abs(result);
+    if( outmode[0] == TRUE ){ result = abs(result); }
     
-    if( outmode[1] == TRUE ) printf("%d\n",(int)result);
-    else printf("%f\n",result);
+    if( outmode[1] == TRUE ){ printf("%d\n",(int)result); }
+    else{ printf("%f\n",result); }
 
   }
 
@@ -191,19 +204,20 @@ int main(int argc, char **argv){
 /************************************
 Function definitions
  ***********************************/
-static double calculate(const char* calculation){
-  double operand = 0.0;
-  hline = (char*)malloc(BFSIZE * sizeof(char));
-  strcpy(hline, calculation);
+static double calculate(char* calculation){
+  double operand1 = 0.0;
+  double operand2 = 0.0;
+  double result = 0.0;
+  char* hline = calculation;
   char* endptr = (char*) 0;
 
   while( (*hline != '\n') && (*hline != EOF)){
-    operand = strtod(hline, &endptr);
+    operation = 0;
+    operand1 = strtod(hline, &endptr);
+    errno = 0; 
+    if( operand1 == HUGE_VAL && errno != 0 ){ bailout("calculate The given value causes an over- or underflow"); }
 
-    if( operand == HUGE_VAL ) bailout("The given value causes an over- or underflow");
-   
-
-    if( operand == 0 && hline == endptr ){ 
+    if( operand1 == 0 && hline == endptr ){ 
       /* 
        * check for space is needed because endptr stops one char before operator 
        * the loop is for ignoring all whitespaces in front of the operator
@@ -214,40 +228,40 @@ static double calculate(const char* calculation){
       if( *endptr == '\n' || *endptr == EOF ){ break; }
 
       switch(*endptr){
-      case '+': push(pop() + pop());break;
-      case '-': 
-	operand = pop();
-	push((pop() - operand)); break;
-      case '*': push(pop() * pop()); break;
-      case '/': 
-	operand = pop();
-	if( operand == 0 ) bailout("Division by Zero.");
-	push(pop() / operand); break;
-      case 's': push(sin(pop())); break;
-      case 'c': push(cos(pop())); break;
-      
+      case '+': operation = &add;break;
+      case '-': operation = &sub; break;      
+      case '*': operation = &mul; break;
+      case '/': operation = &divide; break;
+      case 's': operand1 = pop(); push(sin(operand1)); break;
+      case 'c': operand1 = pop(); push(cos(operand1)); break;      
       default:
-	bailout("Not a valid operation."); 
+	bailout("Not a valid operation"); 
       }
-      /* moves endptr away from the operator */
+
+      if( operation != 0 ){
+	operand2 = pop();
+	operand1 = pop();
+	/*operation is assigned with one of the binary arithmetic operations*/
+	push(operation(operand1, operand2));
+      }
+      /* moves pointer from operation sign */
       endptr++; 
-    }else{
-      push(operand);
-    }
+    }else{ push(operand1); }
+
     hline = endptr;
   }
 
-  if( stack->actsize > 1 ){
-    bailout("Wrong use of Postfix notation.");
-  }
- 
-  return pop();
+  if( stack->actsize > 1 ){ bailout("calculate Too many items on the stack"); }
+  result = pop();
+  return result;
 }
 
 static bool create_stack(const unsigned int size){
-  if( size <= 0 ) return FALSE;
+  if( size <= 0 ){ return FALSE; }
 
   stack = (Stack*)malloc(sizeof( Stack ));
+  if( stack == NULL ){ return FALSE; }
+  
   stack->maxsize = size;
   stack->actsize =0;
   stack->esp=(double*)malloc(sizeof(double)*size);
@@ -255,33 +269,33 @@ static bool create_stack(const unsigned int size){
   return TRUE;
 }
 static void push(const double value){
-  if( stack == 0 ) bailout("Stack is not initialized.\n");
-  if( stack_isfull() ==  TRUE ) bailout("Stack is full.\n");
+  if( stack == 0 ){ bailout("push Stack is not initialized"); }
+  if( stack_isfull() ==  TRUE ){ bailout("push Stack is full"); }
   stack->esp[stack->actsize] = value;
   stack->actsize++;
  
 }
 static double pop(void){
-  if( stack == 0 ) bailout("Stack is not initialized.\n");
-  if( stack_isempty() == TRUE ) bailout("Stack is empty.\n");
+  if( stack == 0 ){ bailout("pop Stack is not initialized"); }
+  if( stack_isempty() == TRUE ){ bailout("pop Stack is empty"); }
   stack->actsize--;
   return stack->esp[stack->actsize]; 
 
 }
 static void destroy_stack(void){
-  if( stack == 0 ) bailout("Stack is not initialized.\n");
+  if( stack == 0 ){ bailout("destroy_stack Stack is not initialized"); }
   free(stack->esp);
   free(stack);
   stack = (Stack *) 0;
 }
 static bool stack_isempty(void){
-  if( stack == 0 ) bailout("Stack is not initialized.\n");
-  if( stack->actsize != 0) return FALSE;
+  if( stack == 0 ){ bailout("stack_isempty Stack is not initialized"); }
+  if( stack->actsize != 0){ return FALSE; }
   return TRUE;
 }
 static bool stack_isfull(void){
-  if( stack == 0 ) bailout("Stack is not initialized.\n");
-  if( stack->actsize < stack->maxsize ) return FALSE;
+  if( stack == 0 ){ bailout("stack_isfull Stack is not initialized"); }
+  if( stack->actsize < stack->maxsize ){ return FALSE; }
   return TRUE;
 }
 
@@ -294,9 +308,7 @@ static void usage(void){
 }
 
 static void bailout(const char *errmessage){
-  if(errmessage != (const char*) 0){
-    printerror(errmessage);
-  }
+  if(errmessage != (const char*) 0){ printerror(errmessage); }
 
   free_ressources();
   exit(EXIT_FAILURE);
@@ -315,13 +327,10 @@ static void free_ressources(void){
 
     if( fclose(src_file) == EOF ){
       src_file = (FILE *) 0;
-      bailout("Cannot close file stream.");
+      bailout("free_ressources Cannot close file stream");
     }
     src_file = (FILE *) 0;
   }
 
-  if( stack != (Stack *) 0 ){
-    destroy_stack();
-  }
-  
+  if( stack != (Stack *) 0 ){ destroy_stack(); }
 }
